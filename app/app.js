@@ -21,7 +21,8 @@
       { id: 'transport', l: 'Transport', c: '#4D8DC2' }, { id: 'abonnements', l: 'Abonnements', c: '#7B69C6' },
       { id: 'sorties', l: 'Sorties & restos', c: '#D25F7E' }, { id: 'sante', l: 'Santé & sport', c: '#3E9C93' },
       { id: 'shopping', l: 'Shopping', c: '#C8A33A' }, { id: 'voyages', l: 'Voyages', c: '#5AA35F' },
-      { id: 'pot', l: 'Pot commun', c: '#7656C2' }, { id: 'autre', l: 'Autre', c: '#9A8FA6' }],
+      { id: 'pot', l: 'Pot commun', c: '#7656C2' }, { id: 'yumi', l: 'Yumi', c: '#8C5A3C' },
+      { id: 'autre', l: 'Autre', c: '#9A8FA6' }],
     in: [
       { id: 'salaire', l: 'Salaire', c: '#3B8A6B' }, { id: 'versement', l: 'Versement perso', c: '#7656C2' },
       { id: 'aides', l: 'Aides (APL, CAF…)', c: '#4D8DC2' }, { id: 'bourse', l: 'Bourse', c: '#2F7FA6' },
@@ -208,6 +209,17 @@
   const hasParts = e => SHARED && e.type === 'out' && e.kind !== 'fixed';
   const partOf = (e, k) => +((e.parts || {})[k]) || 0;
   const r2 = n => Math.round(n * 100) / 100;
+  const otherOf = k => k === 'a' ? 'b' : 'a';
+  /* Achat payé par une personne (who = 'a' ou 'b') : l'autre peut y ajouter sa participation,
+     qui est retirée de ce qu'a payé l'acheteur. Achat commun (who = 'both') : chacun peut indiquer sa part. */
+  const payerOf = e => (e.who === 'a' || e.who === 'b') ? e.who : null;
+  /* Ce que chacun a réellement sorti de sa poche pour une dépense, et ce qui reste au pot commun. */
+  function paidBy(e) {
+    const r = { a: 0, b: 0, common: 0 }, pay = payerOf(e);
+    if (pay) { const op = hasParts(e) ? Math.min(e.amount, partOf(e, otherOf(pay))) : 0; r[otherOf(pay)] = op; r[pay] = e.amount - op; }
+    else { const pa = hasParts(e) ? partOf(e, 'a') : 0, pb = hasParts(e) ? partOf(e, 'b') : 0; r.a = pa; r.b = pb; r.common = e.amount - pa - pb; }
+    return r;
+  }
 
   /* ---------- graphiques ---------- */
   function donutSVG(parts, total) {
@@ -252,7 +264,11 @@
     else if (showDate && e.date) { const [, mo, d] = e.date.split('-'); sub.push(`<span>${+d} ${MS[+mo - 1]}</span>`); }
     if (!SHARED || e.kind !== 'fixed') sub.push(`<span>${esc(c.l)}</span>`);
     let pl = '';
-    if (hasParts(e)) {
+    const pay = payerOf(e);
+    if (hasParts(e) && pay) {
+      const op = partOf(e, otherOf(pay));
+      if (op > 0) { const r = paidBy(e); pl = `<span class="s parts">${[pay, otherOf(pay)].map(k => `<span class="chip ${k}">${esc(spaceName(k))} ${eur(r[k])}</span>`).join('')}</span>`; }
+    } else if (hasParts(e)) {
       const given = ['a', 'b'].filter(k => partOf(e, k) > 0), left = r2(e.amount - partOf(e, 'a') - partOf(e, 'b'));
       pl = !given.length ? '<span class="s parts"><span>Touchez pour indiquer votre part</span></span>'
         : `<span class="s parts">${given.map(k => `<span class="chip ${k}">${esc(spaceName(k))} ${eur(partOf(e, k))}</span>`).join('')}${left > 0 ? `<span>reste ${eur(left)}</span>` : left < 0 ? `<span class="over">${eur(-left)} de trop</span>` : '<span class="ok">réglé</span>'}</span>`;
@@ -275,16 +291,19 @@
     h += `</section>`;
     if (SHARED) {
       const P = { a: { in: 0, out: 0 }, b: { in: 0, out: 0 } }; let common = 0;
-      for (const e of t.list) { if (e.who === 'a' || e.who === 'b') P[e.who][e.type === 'in' ? 'in' : 'out'] += e.amount; else if (e.type === 'out') common += e.amount; }
-      const PP = { a: 0, b: 0 }; for (const e of t.list) if (hasParts(e)) { PP.a += partOf(e, 'a'); PP.b += partOf(e, 'b'); }
+      for (const e of t.list) {
+        if (e.type === 'in') { if (e.who === 'a' || e.who === 'b') P[e.who].in += e.amount; continue; }
+        const r = paidBy(e); P.a.out += r.a; P.b.out += r.b; common += r.common;
+      }
       const ti = P.a.in + P.b.in;
       h += `<section class="card split"><h2>Qui met quoi</h2>`;
       if (ti > 0) { const pa = P.a.in / ti; h += `<div class="bar" role="img" aria-label="Part des versements : ${esc(n[0])} ${Math.round(pa * 100)} %, ${esc(n[1])} ${Math.round((1 - pa) * 100)} %"><i style="width:${pa * 100}%;background:var(--c-a)">${pa > .15 ? esc(n[0]) + ' ' + Math.round(pa * 100) + '%' : ''}</i><i style="width:${(1 - pa) * 100}%;background:var(--c-b)">${1 - pa > .15 ? esc(n[1]) + ' ' + Math.round((1 - pa) * 100) + '%' : ''}</i></div>`; }
-      h += `<div class="people">${['a', 'b'].map(k => `<div class="person"><div class="who"><i style="background:var(--c-${k})"></i>${esc(spaceName(k))}</div><span>Verse <b class="num">${eur0(P[k].in)}</b></span><span>A payé seul·e <b class="num">${eur0(P[k].out)}</b></span><span>Part des achats <b class="num">${eur0(PP[k])}</b></span></div>`).join('')}</div>`;
-      h += `<div class="gnote" style="margin:0">Dépenses communes : <b class="num">${eur0(common)}</b>. Notez chaque versement en revenu avec le bon prénom.</div></section>`;
+      h += `<div class="people">${['a', 'b'].map(k => `<div class="person"><div class="who"><i style="background:var(--c-${k})"></i>${esc(spaceName(k))}</div><span>Verse <b class="num">${eur0(P[k].in)}</b></span><span>A payé <b class="num">${eur0(P[k].out)}</b></span></div>`).join('')}</div>`;
+      h += `<div class="common-box"><div class="who"><i></i>Dépenses communes</div><b class="num">${eur0(common)}</b><span>payées avec le pot commun</span></div>`;
+      h += `<p class="hint" style="margin:0">« A payé » : ce que chacun a avancé de sa poche, participations comprises. Notez chaque versement en rentrée avec le bon prénom.</p></section>`;
     }
     const inc = t.list.filter(e => e.type === 'in'), fx = t.list.filter(e => e.type === 'out' && e.kind === 'fixed'), on = t.list.filter(e => e.type === 'out' && e.kind !== 'fixed').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    h += `<section class="card"><h2>Le détail <button class="link" data-add="once">+ Ajouter</button></h2>${t.list.length && !isDemo() ? '<p class="hint" style="margin:-4px 0 6px">Touchez une ligne pour la modifier, la dupliquer ou la supprimer.</p>' : ''}<div class="list">`;
+    h += `<section class="card"><h2>Le détail <button class="link" data-add="once">+ Ajouter</button></h2>${t.list.length && !isDemo() ? `<p class="hint" style="margin:-4px 0 6px">${SHARED ? 'Touchez un achat pour indiquer votre participation ou le modifier.' : 'Touchez une ligne pour la modifier, la dupliquer ou la supprimer.'}</p>` : ''}<div class="list">`;
     if (!t.list.length) h += `<div class="empty">Rien pour ce mois. Ajoutez une entrée avec le bouton +.</div>`;
     if (on.length) h += `<div class="group-t"><span>Ponctuels</span><span class="num">${eur0(on.reduce((s, e) => s + e.amount, 0))}</span></div>` + on.map(e => rowHTML(e, true)).join('');
     if (fx.length) h += `<div class="group-t"><span>Dépenses fixes</span><span class="num">${eur0(t.outF)}</span></div>` + fx.map(e => rowHTML(e)).join('');
@@ -435,7 +454,10 @@
         if (!(amount > 0)) { toast('Indiquez un montant supérieur à 0'); sh.querySelector('#f-amount').focus(); return; }
         const body = { type: el.type.value, kind: el.kind.value, label: label || cat(el.type.value, curCat).l, amount, cat: curCat, updatedAt: Date.now() };
         if (SHARED) body.who = el.who.value;
-        if (!isNew && e.parts && hasParts(body)) body.parts = rawDoc('entries', e.id)?.parts || e.parts;
+        if (!isNew && e.parts && hasParts(body)) {
+          const parts = Object.assign({}, rawDoc('entries', e.id)?.parts || e.parts); if (payerOf(body)) delete parts[body.who];
+          if (Object.keys(parts).length) body.parts = parts;
+        }
         if (body.kind === 'fixed') {
           body.start = sh.querySelector('#f-start').value || S.month; const end = sh.querySelector('#f-end').value;
           if (end) { if (end < body.start) { toast('La date de fin est avant le début'); return; } body.end = end; }
@@ -448,35 +470,52 @@
     });
   }
   function partSheet(e) {
-    const me = KEY[ME.person], other = me === 'a' ? 'b' : 'a', theirs = partOf(e, other), mine0 = partOf(e, me);
-    const half = r2(e.amount / 2), rest = r2(Math.max(0, e.amount - theirs));
+    const me = KEY[ME.person], other = otherOf(me), pay = payerOf(e), mine0 = partOf(e, me);
     const val = n => n ? String(n).replace('.', ',') : '';
-    openSheet(`<h3>${esc(e.label)}</h3><form id="pf" novalidate>
-      <div class="part-total"><span>Prix de l’achat</span><b class="num">${eur(e.amount)}</b></div>
+    const card = (k, label, id, v) => `<div class="person"><div class="who"><i style="background:var(--c-${k})"></i>${esc(spaceName(k))}${k === me ? ' (moi)' : ''}</div><span>${label} <b class="num" id="${id}">${eur(v)}</b></span></div>`;
+    const actions = submit => `<div class="actions"><button type="button" class="btn ghost small" id="p-edit">Modifier l’achat</button><div class="r"><button type="button" class="btn ghost" id="p-cancel">${submit ? 'Annuler' : 'Fermer'}</button>${submit ? '<button class="btn" type="submit">Enregistrer</button>' : ''}</div></div>`;
+    const total = `<div class="part-total"><span>Prix de l’achat${pay ? ` · payé par ${esc(spaceName(pay))}` : ''}</span><b class="num">${eur(e.amount)}</b></div>`;
+    const wire = sh => { sh.querySelector('#p-cancel').onclick = closeSheet; sh.querySelector('#p-edit').onclick = () => { closeSheet(); entrySheet(e); }; };
+
+    // C'est moi qui ai payé : je vois la participation de l'autre, c'est à lui de la saisir.
+    if (pay === me) {
+      const r = paidBy(e);
+      openSheet(`<h3>${esc(e.label)}</h3><form id="pf" novalidate>${total}
+        <div class="people">${card(me, 'A payé', 'p-a', r[me])}${card(other, 'A participé', 'p-b', r[other])}</div>
+        <p class="hint" style="margin:0">${r[other] > 0 ? `${esc(spaceName(other))} a participé : c’est déduit de ce que tu as payé.` : `${esc(spaceName(other))} peut toucher cet achat pour indiquer sa participation : elle sera déduite de ce que tu as payé.`}</p>
+        ${actions(false)}</form>`, wire);
+      return;
+    }
+    // Achat payé par l'autre (ma part est déduite de la sienne) ou achat du pot commun.
+    const theirs = pay ? 0 : partOf(e, other), cap = r2(e.amount - theirs), half = r2(e.amount / 2);
+    openSheet(`<h3>${esc(e.label)}</h3><form id="pf" novalidate>${total}
       <label class="field"><span>Ma participation</span><input class="amount num" id="p-mine" inputmode="decimal" placeholder="0 €" value="${val(mine0)}" autocomplete="off"></label>
-      <div class="quick"><button type="button" class="btn ghost small" data-fill="${half}">La moitié · ${eur(half)}</button>${rest > 0 && rest !== half ? `<button type="button" class="btn ghost small" data-fill="${rest}">Tout le reste · ${eur(rest)}</button>` : ''}${mine0 ? '<button type="button" class="btn ghost small" data-fill="0">Retirer ma part</button>' : ''}</div>
-      <div class="people">${[me, other].map(k => `<div class="person"><div class="who"><i style="background:var(--c-${k})"></i>${esc(spaceName(k))}${k === me ? ' (moi)' : ''}</div><span>A mis <b class="num" ${k === me ? 'id="p-me-show"' : ''}>${eur(partOf(e, k))}</b></span></div>`).join('')}</div>
+      <div class="quick"><button type="button" class="btn ghost small" data-fill="${half}">La moitié · ${eur(half)}</button>${!pay && cap > 0 && cap !== half ? `<button type="button" class="btn ghost small" data-fill="${cap}">Tout le reste · ${eur(cap)}</button>` : ''}${mine0 ? '<button type="button" class="btn ghost small" data-fill="0">Retirer ma part</button>' : ''}</div>
+      <div class="people">${pay ? card(pay, 'A payé', 'p-o', e.amount - mine0) + card(me, 'A participé', 'p-m', mine0) : card(me, 'A mis', 'p-m', mine0) + card(other, 'A mis', 'p-o', theirs)}</div>
       <p class="hint" id="p-hint" style="margin:0"></p>
-      <div class="actions"><button type="button" class="btn ghost small" id="p-edit">Modifier l’achat</button><div class="r"><button type="button" class="btn ghost" id="p-cancel">Annuler</button><button class="btn" type="submit">Enregistrer</button></div></div>
-    </form>`, sh => {
+      ${actions(true)}</form>`, sh => {
+      wire(sh);
       const inp = sh.querySelector('#p-mine');
       const cur = () => { const v = inp.value.trim(); return v === '' ? 0 : parseAmt(v); };
       const upd = () => {
-        const v = cur(), h = sh.querySelector('#p-hint'); sh.querySelector('#p-me-show').textContent = eur(v >= 0 ? v : 0);
-        if (!(v >= 0)) { h.textContent = 'Montant invalide'; return; }
-        const left = r2(e.amount - theirs - v);
-        h.textContent = left > 0 ? `Il restera ${eur(left)} à payer.` : left === 0 ? 'L’achat est entièrement réglé.' : `C’est ${eur(-left)} de plus que le prix.`;
+        const v = cur(), ok = v >= 0, h = sh.querySelector('#p-hint');
+        sh.querySelector('#p-m').textContent = eur(ok ? v : 0);
+        if (pay) sh.querySelector('#p-o').textContent = eur(Math.max(0, e.amount - (ok ? v : 0)));
+        if (!ok) { h.textContent = 'Montant invalide'; return; }
+        const left = r2(cap - v);
+        h.textContent = left < 0 ? `C’est ${eur(-left)} de plus que le prix.`
+          : pay ? `${spaceName(pay)} n’aura payé que ${eur(left)}, ta part de ${eur(v)} est déduite.`
+          : left > 0 ? `Il restera ${eur(left)} pour le pot commun.` : 'L’achat est entièrement réglé.';
       };
       upd(); inp.addEventListener('input', upd);
       sh.querySelectorAll('[data-fill]').forEach(b => { b.onclick = () => { inp.value = val(+b.dataset.fill); upd(); }; });
-      sh.querySelector('#p-cancel').onclick = closeSheet;
-      sh.querySelector('#p-edit').onclick = () => { closeSheet(); entrySheet(e); };
       sh.querySelector('#pf').addEventListener('submit', async ev => {
         ev.preventDefault();
         const v = cur(); if (!(v >= 0)) { toast('Indiquez un montant (0 pour retirer votre part)'); inp.focus(); return; }
         const body = rawDoc('entries', e.id); if (!body) { closeSheet(); toast('Cet achat a été supprimé entre-temps'); return; }
-        const other2 = partOf(body, other);
-        if (v + other2 > body.amount + 0.001) { toast(`Ça dépasse le prix : ta part peut aller jusqu’à ${eur(Math.max(0, r2(body.amount - other2)))}`); return; }
+        if (body.who === me) { closeSheet(); toast('Cet achat est maintenant à ton nom'); return; }
+        const max = r2(body.amount - (payerOf(body) ? 0 : partOf(body, other)));
+        if (v > max + 0.001) { toast(`Ça dépasse le prix : ta part peut aller jusqu’à ${eur(Math.max(0, max))}`); return; }
         const parts = Object.assign({}, body.parts); if (v > 0) parts[me] = v; else delete parts[me];
         if (Object.keys(parts).length) body.parts = parts; else delete body.parts;
         body.updatedAt = Date.now();

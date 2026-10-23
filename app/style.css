@@ -253,3 +253,8 @@ form{display:flex;flex-direction:column;gap:14px}
 .part-total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:12px 14px;border-radius:12px;background:var(--sunk);font-size:14px;color:var(--muted)}
 .part-total b{font-size:22px;color:var(--ink)}
 .quick{display:flex;flex-wrap:wrap;gap:8px}
+.common-box{border-radius:12px;padding:12px 14px;display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:2px 12px;background:var(--sunk)}
+.common-box .who{font-weight:700;display:flex;align-items:center;gap:6px;font-size:14px}
+.common-box .who i{width:10px;height:10px;border-radius:50%;display:block;background:linear-gradient(90deg,var(--c-a) 50%,var(--c-b) 50%)}
+.common-box b{font-size:20px;grid-row:span 2;align-self:center}
+.common-box span{font-size:12.5px;color:var(--muted)}
