@@ -203,6 +203,11 @@
     return { list, inc, out, outF, sav, rest: inc - out - sav };
   }
   const saved = g => (g.contribs || []).reduce((s, c) => s + c.a, 0);
+  /* Participations à un achat commun ponctuel : champ facultatif doc.parts = { a: 120, b: 80 }.
+     Les achats sans ce champ (tous ceux d'avant) restent valides. */
+  const hasParts = e => SHARED && e.type === 'out' && e.kind !== 'fixed';
+  const partOf = (e, k) => +((e.parts || {})[k]) || 0;
+  const r2 = n => Math.round(n * 100) / 100;
 
   /* ---------- graphiques ---------- */
   function donutSVG(parts, total) {
@@ -246,7 +251,13 @@
     if (e.kind === 'fixed') sub.push('<span>chaque mois</span>');
     else if (showDate && e.date) { const [, mo, d] = e.date.split('-'); sub.push(`<span>${+d} ${MS[+mo - 1]}</span>`); }
     if (!SHARED || e.kind !== 'fixed') sub.push(`<span>${esc(c.l)}</span>`);
-    return `<button class="row" data-edit="${esc(e.id)}"><span class="ico" style="background:${c.c}22;color:${c.c}">${esc(c.l.slice(0, 2))}</span><span class="mid"><span class="t">${esc(e.label)}</span><span class="s">${sub.join('')}</span></span><span class="amt num ${e.type === 'in' ? 'in' : ''}">${e.type === 'in' ? '+' : '−'}${eur(e.amount)}</span></button>`;
+    let pl = '';
+    if (hasParts(e)) {
+      const given = ['a', 'b'].filter(k => partOf(e, k) > 0), left = r2(e.amount - partOf(e, 'a') - partOf(e, 'b'));
+      pl = !given.length ? '<span class="s parts"><span>Touchez pour indiquer votre part</span></span>'
+        : `<span class="s parts">${given.map(k => `<span class="chip ${k}">${esc(spaceName(k))} ${eur(partOf(e, k))}</span>`).join('')}${left > 0 ? `<span>reste ${eur(left)}</span>` : left < 0 ? `<span class="over">${eur(-left)} de trop</span>` : '<span class="ok">réglé</span>'}</span>`;
+    }
+    return `<button class="row" data-edit="${esc(e.id)}"><span class="ico" style="background:${c.c}22;color:${c.c}">${esc(c.l.slice(0, 2))}</span><span class="mid"><span class="t">${esc(e.label)}</span><span class="s">${sub.join('')}</span>${pl}</span><span class="amt num ${e.type === 'in' ? 'in' : ''}">${e.type === 'in' ? '+' : '−'}${eur(e.amount)}</span></button>`;
   }
   function renderMois() {
     const t = totals(S.month), n = names(); let h = banner();
@@ -265,10 +276,11 @@
     if (SHARED) {
       const P = { a: { in: 0, out: 0 }, b: { in: 0, out: 0 } }; let common = 0;
       for (const e of t.list) { if (e.who === 'a' || e.who === 'b') P[e.who][e.type === 'in' ? 'in' : 'out'] += e.amount; else if (e.type === 'out') common += e.amount; }
+      const PP = { a: 0, b: 0 }; for (const e of t.list) if (hasParts(e)) { PP.a += partOf(e, 'a'); PP.b += partOf(e, 'b'); }
       const ti = P.a.in + P.b.in;
       h += `<section class="card split"><h2>Qui met quoi</h2>`;
       if (ti > 0) { const pa = P.a.in / ti; h += `<div class="bar" role="img" aria-label="Part des versements : ${esc(n[0])} ${Math.round(pa * 100)} %, ${esc(n[1])} ${Math.round((1 - pa) * 100)} %"><i style="width:${pa * 100}%;background:var(--c-a)">${pa > .15 ? esc(n[0]) + ' ' + Math.round(pa * 100) + '%' : ''}</i><i style="width:${(1 - pa) * 100}%;background:var(--c-b)">${1 - pa > .15 ? esc(n[1]) + ' ' + Math.round((1 - pa) * 100) + '%' : ''}</i></div>`; }
-      h += `<div class="people">${['a', 'b'].map(k => `<div class="person"><div class="who"><i style="background:var(--c-${k})"></i>${esc(spaceName(k))}</div><span>Verse <b class="num">${eur0(P[k].in)}</b></span><span>A payé seul·e <b class="num">${eur0(P[k].out)}</b></span></div>`).join('')}</div>`;
+      h += `<div class="people">${['a', 'b'].map(k => `<div class="person"><div class="who"><i style="background:var(--c-${k})"></i>${esc(spaceName(k))}</div><span>Verse <b class="num">${eur0(P[k].in)}</b></span><span>A payé seul·e <b class="num">${eur0(P[k].out)}</b></span><span>Part des achats <b class="num">${eur0(PP[k])}</b></span></div>`).join('')}</div>`;
       h += `<div class="gnote" style="margin:0">Dépenses communes : <b class="num">${eur0(common)}</b>. Notez chaque versement en revenu avec le bon prénom.</div></section>`;
     }
     const inc = t.list.filter(e => e.type === 'in'), fx = t.list.filter(e => e.type === 'out' && e.kind === 'fixed'), on = t.list.filter(e => e.type === 'out' && e.kind !== 'fixed').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -415,7 +427,7 @@
             box.scrollIntoView({ block: 'nearest' });
           };
         } else armDelete(del, async () => { closeSheet(); await saveWithUndo('entries', e.id, null, 'Entrée supprimée'); });
-        sh.querySelector('#f-dup').onclick = () => { const copy = Object.assign({}, e); delete copy.id; if (copy.kind === 'once') copy.date = S.month === ym() ? today() : S.month + '-01'; else { copy.start = S.month; delete copy.end; } closeSheet(); entrySheet(null, null, copy); };
+        sh.querySelector('#f-dup').onclick = () => { const copy = Object.assign({}, e); delete copy.id; delete copy.parts; if (copy.kind === 'once') copy.date = S.month === ym() ? today() : S.month + '-01'; else { copy.start = S.month; delete copy.end; } closeSheet(); entrySheet(null, null, copy); };
       }
       f.addEventListener('submit', async ev => {
         ev.preventDefault();
@@ -423,6 +435,7 @@
         if (!(amount > 0)) { toast('Indiquez un montant supérieur à 0'); sh.querySelector('#f-amount').focus(); return; }
         const body = { type: el.type.value, kind: el.kind.value, label: label || cat(el.type.value, curCat).l, amount, cat: curCat, updatedAt: Date.now() };
         if (SHARED) body.who = el.who.value;
+        if (!isNew && e.parts && hasParts(body)) body.parts = rawDoc('entries', e.id)?.parts || e.parts;
         if (body.kind === 'fixed') {
           body.start = sh.querySelector('#f-start').value || S.month; const end = sh.querySelector('#f-end').value;
           if (end) { if (end < body.start) { toast('La date de fin est avant le début'); return; } body.end = end; }
@@ -431,6 +444,43 @@
         if (isNew) { if (await saveDoc('entries', null, body)) toast('Ajouté'); }
         else await saveWithUndo('entries', e.id, body, 'Modifié');
         if (isNew && body.kind === 'once' && body.date.slice(0, 7) !== S.month) { S.month = body.date.slice(0, 7); render(); }
+      });
+    });
+  }
+  function partSheet(e) {
+    const me = KEY[ME.person], other = me === 'a' ? 'b' : 'a', theirs = partOf(e, other), mine0 = partOf(e, me);
+    const half = r2(e.amount / 2), rest = r2(Math.max(0, e.amount - theirs));
+    const val = n => n ? String(n).replace('.', ',') : '';
+    openSheet(`<h3>${esc(e.label)}</h3><form id="pf" novalidate>
+      <div class="part-total"><span>Prix de l’achat</span><b class="num">${eur(e.amount)}</b></div>
+      <label class="field"><span>Ma participation</span><input class="amount num" id="p-mine" inputmode="decimal" placeholder="0 €" value="${val(mine0)}" autocomplete="off"></label>
+      <div class="quick"><button type="button" class="btn ghost small" data-fill="${half}">La moitié · ${eur(half)}</button>${rest > 0 && rest !== half ? `<button type="button" class="btn ghost small" data-fill="${rest}">Tout le reste · ${eur(rest)}</button>` : ''}${mine0 ? '<button type="button" class="btn ghost small" data-fill="0">Retirer ma part</button>' : ''}</div>
+      <div class="people">${[me, other].map(k => `<div class="person"><div class="who"><i style="background:var(--c-${k})"></i>${esc(spaceName(k))}${k === me ? ' (moi)' : ''}</div><span>A mis <b class="num" ${k === me ? 'id="p-me-show"' : ''}>${eur(partOf(e, k))}</b></span></div>`).join('')}</div>
+      <p class="hint" id="p-hint" style="margin:0"></p>
+      <div class="actions"><button type="button" class="btn ghost small" id="p-edit">Modifier l’achat</button><div class="r"><button type="button" class="btn ghost" id="p-cancel">Annuler</button><button class="btn" type="submit">Enregistrer</button></div></div>
+    </form>`, sh => {
+      const inp = sh.querySelector('#p-mine');
+      const cur = () => { const v = inp.value.trim(); return v === '' ? 0 : parseAmt(v); };
+      const upd = () => {
+        const v = cur(), h = sh.querySelector('#p-hint'); sh.querySelector('#p-me-show').textContent = eur(v >= 0 ? v : 0);
+        if (!(v >= 0)) { h.textContent = 'Montant invalide'; return; }
+        const left = r2(e.amount - theirs - v);
+        h.textContent = left > 0 ? `Il restera ${eur(left)} à payer.` : left === 0 ? 'L’achat est entièrement réglé.' : `C’est ${eur(-left)} de plus que le prix.`;
+      };
+      upd(); inp.addEventListener('input', upd);
+      sh.querySelectorAll('[data-fill]').forEach(b => { b.onclick = () => { inp.value = val(+b.dataset.fill); upd(); }; });
+      sh.querySelector('#p-cancel').onclick = closeSheet;
+      sh.querySelector('#p-edit').onclick = () => { closeSheet(); entrySheet(e); };
+      sh.querySelector('#pf').addEventListener('submit', async ev => {
+        ev.preventDefault();
+        const v = cur(); if (!(v >= 0)) { toast('Indiquez un montant (0 pour retirer votre part)'); inp.focus(); return; }
+        const body = rawDoc('entries', e.id); if (!body) { closeSheet(); toast('Cet achat a été supprimé entre-temps'); return; }
+        const other2 = partOf(body, other);
+        if (v + other2 > body.amount + 0.001) { toast(`Ça dépasse le prix : ta part peut aller jusqu’à ${eur(Math.max(0, r2(body.amount - other2)))}`); return; }
+        const parts = Object.assign({}, body.parts); if (v > 0) parts[me] = v; else delete parts[me];
+        if (Object.keys(parts).length) body.parts = parts; else delete body.parts;
+        body.updatedAt = Date.now();
+        closeSheet(); await saveWithUndo('entries', e.id, body, v > 0 ? `Ta part : ${eur(v)}` : 'Ta part a été retirée');
       });
     });
   }
@@ -554,8 +604,8 @@
     a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
   function exportCSV() {
-    const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"', rows = [['Type', 'Fréquence', 'Libellé', 'Catégorie', 'Montant', 'Date / début', 'Fin', 'Qui']];
-    real().entries.forEach(e => rows.push([e.type === 'in' ? 'Revenu' : 'Dépense', e.kind === 'fixed' ? 'Chaque mois' : 'Ponctuel', e.label, cat(e.type, e.cat).l, String(e.type === 'in' ? e.amount : -e.amount).replace('.', ','), e.kind === 'fixed' ? e.start : e.date, e.end || '', SHARED ? whoName(e.who) : spaceName(SPACE)]));
+    const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"', rows = [['Type', 'Fréquence', 'Libellé', 'Catégorie', 'Montant', 'Date / début', 'Fin', 'Qui'].concat(SHARED ? ['Part ' + names()[0], 'Part ' + names()[1]] : [])];
+    real().entries.forEach(e => rows.push([e.type === 'in' ? 'Revenu' : 'Dépense', e.kind === 'fixed' ? 'Chaque mois' : 'Ponctuel', e.label, cat(e.type, e.cat).l, String(e.type === 'in' ? e.amount : -e.amount).replace('.', ','), e.kind === 'fixed' ? e.start : e.date, e.end || '', SHARED ? whoName(e.who) : spaceName(SPACE)].concat(SHARED ? ['a', 'b'].map(k => partOf(e, k) ? String(partOf(e, k)).replace('.', ',') : '') : [])));
     accounts().forEach(a => (a.movements || []).forEach(m => rows.push([m.initial ? 'Solde de départ' : m.a > 0 ? 'Dépôt' : 'Retrait', 'Épargne', m.label || '', a.name, String(m.a).replace('.', ','), m.date, '', ''])));
     download(`budget-${SHARED ? 'commun' : spaceName(SPACE).toLowerCase()}-${today()}.csv`, '﻿' + rows.map(r => r.map(q).join(';')).join('\n'), 'text/csv;charset=utf-8');
   }
@@ -647,7 +697,7 @@
     if (t.dataset.move) { const a = acc(t.dataset.move); if (a) moveSheet(a, t.dataset.mv); return; }
     if (isDemo()) return toast('C’est un exemple : ajoutez vos propres entrées avec +');
     const { entries, goals } = data();
-    if (t.dataset.edit) { const en = entries.find(x => x.id === t.dataset.edit); if (en) entrySheet(en); }
+    if (t.dataset.edit) { const en = entries.find(x => x.id === t.dataset.edit); if (en) (hasParts(en) ? partSheet(en) : entrySheet(en)); }
     if (t.dataset.editgoal) { const g = goals.find(x => x.id === t.dataset.editgoal); if (g) goalSheet(g); }
     if (t.dataset.contrib) { const g = goals.find(x => x.id === t.dataset.contrib); if (g) contribSheet(g); }
   });

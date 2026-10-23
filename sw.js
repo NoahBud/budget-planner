@@ -1,6 +1,6 @@
 /* Notre budget : garde l'appli (pas les données) en cache pour qu'elle s'ouvre vite, même avec un réseau faible.
    Les données passent toujours par Supabase. Changez VERSION à chaque mise en ligne d'une nouvelle version. */
-const VERSION = 'nb-2026-10-21';
+const VERSION = 'nb-2026-10-23';
 const SHELL = ['./', 'index.html', 'budget.html', 'commun.html', 'config.js', 'app/app.js', 'app/login.js', 'app/style.css', 'app/supabase.js', 'app/qrcode.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon.svg'];
 
 self.addEventListener('install', e => {

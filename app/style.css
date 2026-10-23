@@ -245,3 +245,11 @@ form{display:flex;flex-direction:column;gap:14px}
 .qr.big{padding:12px;border-radius:16px}
 .qr.big svg{width:220px;height:220px;max-width:70vw;max-height:70vw}
 .addr{display:block;font-family:ui-monospace,Menlo,monospace;font-size:13.5px;background:var(--sunk);border-radius:10px;padding:9px 12px;word-break:break-all;user-select:all}
+
+/* Participations aux achats communs */
+.row .parts{margin-top:4px}
+.row .parts .ok{color:var(--in);font-weight:600}
+.row .parts .over{color:var(--out);font-weight:600}
+.part-total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:12px 14px;border-radius:12px;background:var(--sunk);font-size:14px;color:var(--muted)}
+.part-total b{font-size:22px;color:var(--ink)}
+.quick{display:flex;flex-wrap:wrap;gap:8px}
