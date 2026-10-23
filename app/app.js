@@ -161,7 +161,7 @@
         ? await sb.from('docs').delete().match(k)
         : await sb.from('docs').upsert(Object.assign({}, k, { doc: payload.doc }));
       if (error) throw error;
-      setOnline(true); return true;
+      setOnline(true); if (SHARED && payload.col === 'entries') queueSync(); return true;
     } catch (e) {
       setOnline(false); toast('Pas enregistré : vérifiez votre connexion internet');
       try { await loadServer(); } catch (_) { } render(); return false;
@@ -180,13 +180,50 @@
   let reloadTimer = null;
   function scheduleReload() {
     clearTimeout(reloadTimer);
-    reloadTimer = setTimeout(async () => { try { await loadServer(); setOnline(true); render(); } catch (_) { setOnline(false); } }, 250);
+    reloadTimer = setTimeout(async () => { try { await loadServer(); setOnline(true); render(); queueSync(); } catch (_) { setOnline(false); } }, 250);
+  }
+
+  /* ---------- participations du Commun -> budget perso ----------
+     Chaque participation que je saisis sur un achat commun crée dans MON budget perso une dépense
+     du même nom (id « commun-<id de l'achat> », champ fromCommun). Elle est recalculée à chaque
+     chargement : si l'achat change ou disparaît, ou si je retire ma part, elle suit.
+     Chacun ne peut écrire que dans son propre budget (règles de la base) : la synchro est donc
+     faite par la personne elle-même, depuis n'importe laquelle des deux pages. */
+  const MIRROR = 'commun-';
+  let syncQ = Promise.resolve();
+  const queueSync = () => { syncQ = syncQ.then(syncMirrors).catch(() => { }); return syncQ; };
+  async function syncMirrors() {
+    if (!sb || !ME || S.mode !== 'server') return;
+    const me = KEY[ME.person], base = { household: ME.household, space: me, col: 'entries' };
+    let common, mine;
+    if (SHARED) {
+      common = ST.data.entries;
+      const r = await sb.from('docs').select('id, doc').match(base).like('id', MIRROR + '%'); if (r.error) throw r.error;
+      mine = Object.fromEntries((r.data || []).map(x => [x.id, x.doc]));
+    } else {
+      const r = await sb.from('docs').select('id, doc').match({ household: ME.household, space: 'commun', col: 'entries' }); if (r.error) throw r.error;
+      common = Object.fromEntries((r.data || []).map(x => [x.id, x.doc]));
+      mine = Object.fromEntries(Object.entries(ST.data.entries).filter(([id]) => id.startsWith(MIRROR)));
+    }
+    const want = {};
+    for (const [id, e] of Object.entries(common || {})) {
+      const part = partOf(e, me);
+      if (e.type === 'out' && e.kind !== 'fixed' && e.who !== me && part > 0 && (MIRROR + id).length <= 64)
+        want[MIRROR + id] = { type: 'out', kind: 'once', label: e.label, amount: part, cat: e.cat, date: e.date || today(), fromCommun: id };
+    }
+    const same = (a, b) => a && ['label', 'amount', 'cat', 'date', 'fromCommun'].every(k => a[k] === b[k]);
+    const ups = Object.entries(want).filter(([id, d]) => !same(mine[id], d)).map(([id, d]) => Object.assign({}, base, { id, doc: Object.assign({}, d, { updatedAt: Date.now() }) }));
+    const dels = Object.keys(mine).filter(id => !want[id]);
+    if (!ups.length && !dels.length) return;
+    if (ups.length) { const r = await sb.from('docs').upsert(ups); if (r.error) throw r.error; }
+    for (const id of dels) { const r = await sb.from('docs').delete().match(Object.assign({}, base, { id })); if (r.error) throw r.error; }
+    if (!SHARED) { await loadServer(); DEMO = null; render(); }
   }
   function subscribe() {
     sb.channel('docs-' + SPACE)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'docs', filter: 'household=eq.' + ME.household }, p => {
         const sp = (p.new && p.new.space) || (p.old && p.old.space);
-        if (!sp || sp === SPACE) scheduleReload();
+        if (!sp || sp === SPACE) scheduleReload(); else if (sp === 'commun' && !SHARED) queueSync();
       })
       .subscribe(status => { if (status === 'SUBSCRIBED') setOnline(true); if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setOnline(false); });
   }
@@ -260,6 +297,7 @@
   function rowHTML(e, showDate) {
     const c = cat(e.type, e.cat), sub = [];
     if (SHARED) sub.push(whoChip(e.who));
+    if (!SHARED && e.fromCommun) sub.push('<span class="chip">Ma part · Commun</span>');
     if (e.kind === 'fixed') sub.push('<span>chaque mois</span>');
     else if (showDate && e.date) { const [, mo, d] = e.date.split('-'); sub.push(`<span>${+d} ${MS[+mo - 1]}</span>`); }
     if (!SHARED || e.kind !== 'fixed') sub.push(`<span>${esc(c.l)}</span>`);
@@ -519,9 +557,15 @@
         const parts = Object.assign({}, body.parts); if (v > 0) parts[me] = v; else delete parts[me];
         if (Object.keys(parts).length) body.parts = parts; else delete body.parts;
         body.updatedAt = Date.now();
-        closeSheet(); await saveWithUndo('entries', e.id, body, v > 0 ? `Ta part : ${eur(v)}` : 'Ta part a été retirée');
+        closeSheet(); await saveWithUndo('entries', e.id, body, v > 0 ? `Ta part : ${eur(v)} · ajoutée à ton budget perso` : 'Ta part a été retirée (et de ton budget perso)');
       });
     });
+  }
+  function linkedSheet(e) {
+    openSheet(`<h3>${esc(e.label)}</h3>
+      <div class="part-total"><span>Ma participation à un achat commun</span><b class="num">${eur(e.amount)}</b></div>
+      <p class="hint" style="margin:0">Cette dépense est créée et mise à jour automatiquement depuis la page Commun. Pour la changer ou la supprimer, modifiez votre participation sur l’achat là-bas.</p>
+      <div class="actions"><div class="r"><button type="button" class="btn ghost" id="l-close">Fermer</button><a class="btn" href="${PAGES.commun}">Aller sur Commun</a></div></div>`, sh => { sh.querySelector('#l-close').onclick = closeSheet; });
   }
   function goalSheet(g) {
     const isNew = !g; g = g || { name: '', target: '', deadline: '', color: data().goals.length % GOAL_COLORS.length, contribs: [] };
@@ -736,7 +780,7 @@
     if (t.dataset.move) { const a = acc(t.dataset.move); if (a) moveSheet(a, t.dataset.mv); return; }
     if (isDemo()) return toast('C’est un exemple : ajoutez vos propres entrées avec +');
     const { entries, goals } = data();
-    if (t.dataset.edit) { const en = entries.find(x => x.id === t.dataset.edit); if (en) (hasParts(en) ? partSheet(en) : entrySheet(en)); }
+    if (t.dataset.edit) { const en = entries.find(x => x.id === t.dataset.edit); if (en) (!SHARED && en.fromCommun ? linkedSheet(en) : hasParts(en) ? partSheet(en) : entrySheet(en)); }
     if (t.dataset.editgoal) { const g = goals.find(x => x.id === t.dataset.editgoal); if (g) goalSheet(g); }
     if (t.dataset.contrib) { const g = goals.find(x => x.id === t.dataset.contrib); if (g) contribSheet(g); }
   });
@@ -754,6 +798,7 @@
       await loadServer(); S.mode = 'server';
     } catch (e) { if (e.message !== 'login') main.innerHTML = '<div class="card"><div class="empty">Impossible de charger le budget. Vérifiez votre connexion internet, puis rechargez la page.</div></div>'; return; }
     DEMO = null; render();
+    queueSync();
     subscribe();
     setInterval(poll, 60000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });

@@ -258,3 +258,4 @@ form{display:flex;flex-direction:column;gap:14px}
 .common-box .who i{width:10px;height:10px;border-radius:50%;display:block;background:linear-gradient(90deg,var(--c-a) 50%,var(--c-b) 50%)}
 .common-box b{font-size:20px;grid-row:span 2;align-self:center}
 .common-box span{font-size:12.5px;color:var(--muted)}
+a.btn{text-decoration:none;display:inline-flex;align-items:center}
