@@ -38,6 +38,21 @@
 <script src="app/supabase.js"></script>
 <script src="app/qrcode.js"></script>
 <script src="app/login.js"></script>
-<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});</script>
+<script>
+/* Mises à jour : dès qu'une nouvelle version est en ligne, l'appli la récupère et se recharge toute seule
+   (en attendant la fin d'une saisie en cours). La vérification se fait à l'ouverture et à chaque retour sur l'appli. */
+if ('serviceWorker' in navigator) {
+  const had = !!navigator.serviceWorker.controller; let done = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!had || done) return; done = true;
+    const go = () => document.querySelector('#sheet-root .overlay') ? setTimeout(go, 1500) : location.reload();
+    go();
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
+</script>
 </body>
 </html>
