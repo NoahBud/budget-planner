@@ -1,0 +1,25 @@
+# Supabase (offre gratuite) met en pause un projet resté une semaine sans aucune utilisation.
+# Cette tâche appelle la base tous les 3 jours pour l'éviter. Elle utilise l'adresse et la clé
+# publique déjà présentes dans config.js : aucun secret à configurer.
+# Lancement manuel possible : onglet Actions > « Garder Supabase actif » > Run workflow.
+name: Garder Supabase actif
+
+on:
+  schedule:
+    - cron: '23 7 */3 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Appeler la base
+        run: |
+          read -r URL KEY < <(node -e "global.window={};require('./config.js');const c=window.NB_CONFIG;console.log(c.url+' '+c.anonKey)")
+          curl -fsS --retry 3 -X POST "$URL/rest/v1/rpc/ping" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{}'
+          echo
